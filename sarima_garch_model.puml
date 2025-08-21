@@ -1,0 +1,81 @@
+@startuml
+skinparam classAttributeIconSize 0
+
+class Data_Handler {
+    - original_data : pd.DataFrame
+    - smoothing : bool
+    - data : pd.DataFrame
+    --
+    + __init__(data: pd.DataFrame)
+    + Data_smoothing(smoothing: bool = False, smoothing_window: int = 3) : pd.DataFrame
+    + Data_aggregation(aggregation: Literal['mean','sum'] = 'sum') : pd.DataFrame
+    + stationarity_test() : str
+    + plot_data(x_label: str = "Datetime", y_label: str = "Value") : void
+    + Data_Seasonal_Decomposer(dec_modeling: Literal['additive','multiplicative'] = 'additive') : void
+}
+
+class Sarima_Garch_Model {
+    - data : pd.DataFrame
+    - smoothing : bool
+    - sarima_rolling_predictions : pd.Series
+    - garch_rolling_predictions : pd.Series
+    - predicted_values : pd.Series
+    - forecasted_mean : float
+    - sarima_model : SARIMAX
+    - garch_model : arch_model
+    - train_window : int
+    - sarima_fit
+    - garch_fit
+    - sarima_forecast
+    - garch_forecast
+    - combined_forecast
+    --
+    + __init__(data: pd.DataFrame)
+    + fit(arima_order, seasonal_order, garch_p, garch_q) : void
+    + predict(sarima_horizon, garch_horizon) : tuple
+    + fit_predict_rolling(arima_order=(2,0,2), seasonal_order=(1,1,1,24),
+                         garch_p=1, garch_q=1, training_window=24,
+                         sarima_pred_steps=1, rolling_step_sarima=1,
+                         garch_pred_steps=1, rolling_step_garch=1) : void
+    + evaluation(rolling: bool=True, model_to_evaluate: Literal['sarima','garch','combined']='combined',
+                 eval_metric: Literal['mse','mae','mape','rmse']='mape',
+                 start_index: int=None, end_index: int=None) : float
+    + plot_predictions(model_to_plot: Literal['sarima','garch','combined']='combined') : void
+}
+
+
+class GARCH_Model {
+    - data : pd.DataFrame
+    - p : int
+    - q : int
+    - model_fit
+    - model
+    - predicted_values
+    --
+    + __init__(data: pd.DataFrame, p: int = 1, q: int = 1)
+    + fit(disp: str = 'off')
+    + predict(steps: int = None)
+    + model_summary()
+    + plot_predictions()
+}
+
+
+package "statsmodels.tsa.statespace" {
+    class SARIMAX
+}
+
+package "arch" {
+    class arch_model
+}
+
+package "pandas" {
+    class DataFrame
+    class Series
+}
+
+Data_Handler "1" --> "1" Sarima_Garch_Model : provides data
+Sarima_Garch_Model ..> SARIMAX : uses
+Sarima_Garch_Model ..> arch_model : uses
+Sarima_Garch_Model ..> DataFrame : input
+Sarima_Garch_Model ..> Series : output
+@enduml
