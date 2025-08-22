@@ -498,6 +498,7 @@ class Model_Selection(Data_Handler,Sarima_Garch_Model,GARCH_Model):
         self.data = data
         self.model = model
         self.model_instance = None
+        self.model_fit = None
         self.predicted_Values = None
         self.forecasted_mean = None
         Handler = Data_Handler(self.data)
@@ -514,7 +515,9 @@ class Model_Selection(Data_Handler,Sarima_Garch_Model,GARCH_Model):
             self.data = Handler.Data_aggregation('sum')
             self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
             self.model_instance = Sarima_Garch_Model(data)
-        
+            self.model_fit = self.model.fit(arima_order=(2,0,2), seasonal_order=(1,1,1,24), garch_p=2, garch_q=2)
+            self.predicted_Values = self.model_instance.predict(sarima_horizon=24, garch_horizon=24)
+            
         elif model == 'LSTM':
             self.data = Handler.Data_aggregation('sum')
             self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
