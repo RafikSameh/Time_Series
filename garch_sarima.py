@@ -16,6 +16,7 @@ from sklearn.metrics import mean_absolute_error as MAE
 from sklearn.metrics import mean_squared_error as MSE
 from sklearn.metrics import root_mean_squared_error as RMSE
 from sklearn.metrics import mean_absolute_percentage_error as MAPE
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import plotly.graph_objects as go
 from typing import Literal
 
@@ -94,7 +95,8 @@ class Data_Handler():
         if scaler == 'minmax':
             self.data = (self.data - self.data.min()) / (self.data.max() - self.data.min())
         else:
-            self.data = (self.data - self.data.mean()) / self.data.std()
+            self.data = StandardScaler().fit_transform(self.original_data.values.reshape(-1, 1))
+            self.data = pd.DataFrame(self.data, index=self.original_data.index, columns=self.original_data.columns)
 
         return self.data
 
@@ -489,3 +491,36 @@ class GARCH_Model():
         fig.show()
 
 
+class Model_Selection(Data_Handler,Sarima_Garch_Model,GARCH_Model):
+    def __init__(self, data: pd.DataFrame,
+                  model: Literal['SARIMA','SARIMAX','SARIMA-GARCH','LSTM','TACTIS-2']):
+        self.original_data = data
+        self.data = data
+        self.model = model
+        self.model_instance = None
+        self.predicted_Values = None
+        self.forecasted_mean = None
+        Handler = Data_Handler(self.data)
+        if model == 'SARIMA':
+            self.data = Handler.Data_aggregation('sum')
+            self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
+            #self.model_instance = SARIMA_Model(data)
+        elif model == 'SARIMAX':
+            self.data = Handler.Data_aggregation('sum')
+            self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
+            #self.model_instance = SARIMAX_Model(data, exogenous=True)
+        
+        elif model == 'SARIMA-GARCH':
+            self.data = Handler.Data_aggregation('sum')
+            self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
+            self.model_instance = Sarima_Garch_Model(data)
+        
+        elif model == 'LSTM':
+            self.data = Handler.Data_aggregation('sum')
+            self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
+            self.data = Handler.scaling(scaler='standard')
+
+            #self.model_instance = LSTM_Model(data)
+        elif model == 'TACTIS-2':
+            self.data = Handler.Data_aggregation('sum')
+            #self.model_instance = TACTIS2_Model(data)
