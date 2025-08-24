@@ -19,418 +19,10 @@ from sklearn.metrics import mean_absolute_percentage_error as MAPE
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import plotly.graph_objects as go
 from typing import Literal
-
-
-
-class Data_Handler():
-    def __init__(self, data: pd.DataFrame):
-        """
-        This class for dataframe handling for pre processing for SARIMA-GARCH model\n
-        methods:
-        - Data_smoothing: Applies rolling mean smoothing to the data.
-        - Data_aggregation: Aggregates the data by the specified method.
-        - stationarity_test: Performs stationarity test on the data.
-        - plot_data: Plots the time series data.
-        - Data_Seasonal_Decomposer: Decomposes the time series data into trend, seasonal, and residual components.
-        """
-        self.original_data = data
-        self.smoothing = None
-        self.data = data
-        
-    def Data_smoothing(self, smoothing: bool = False, smoothing_window: int = 3):
-        """
-        Preprocess the data by applying smoothing and aggregation.\n
-        smoothing: True to apply smoothing, False otherwise.\n
-        smoothing_window: The window size for rolling mean smoothing.\n
-        """
-        self.smoothing = smoothing
-        if smoothing:
-            self.data = self.data.rolling(smoothing_window).mean()
-
-        return self.data
-
-    def Data_aggregation(self, aggregation: Literal['mean', 'sum'] = 'sum'):
-        """
-        Aggregate the data by the specified method.
-        """
-        self.data.index = pd.to_datetime(self.data.index)
-        if aggregation == 'mean':
-            self.data = self.original_data.resample('h').mean()
-        else:
-            self.data = self.original_data.resample('h').sum()
-
-        return self.data
-
-    def stationarity_test(self):
-        """
-        Performs stationarity test on the data.
-        """
-        # Perform ADF test
-        adf_result = adfuller(self.data.dropna())
-        print("ADF Statistic:", adf_result[0])
-        print("p-value:", adf_result[1])
-        return "Stationary" if adf_result[1] <= 0.05 else "Non-Stationary"
-    
-    def plot_data(self,x_label: str = 'Datetime',y_label: str = 'Value'):
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=self.data.index, y=self.data, mode='lines', name=y_label))
-        fig.add_trace(go.Scatter(x=self.data.index, y=self.data.mean().repeat(len(self.data)), mode='lines', name=y_label + ' mean'))
-        fig.update_layout(title='Time Series Data',
-                          xaxis_title=x_label,
-                          yaxis_title=y_label,
-                          hovermode="x unified")
-        fig.show()
-
-    def Data_Seasonal_Decomposer(self,dec_modeling: Literal['additive', 'multiplicative'] = 'additive'):
-        """
-        Decomposes the time series data into trend, seasonal, and residual components.
-        """
-        decomposition = seasonal_decompose(self.data, model=dec_modeling).plot()
-        plt.show()
-
-    def scaling(self, scaler: Literal['minmax', 'standard'] = 'minmax'):
-        """
-        Scales the data using the specified scaler.
-        """
-        if scaler == 'minmax':
-            self.data = (self.data - self.data.min()) / (self.data.max() - self.data.min())
-        else:
-            self.data = StandardScaler().fit_transform(self.original_data.values.reshape(-1, 1))
-            self.data = pd.DataFrame(self.data, index=self.original_data.index, columns=self.original_data.columns)
-
-        return self.data
-
-
-class Model_Data_Handler(Data_Handler):
-    def __init__(self,data: pd.DataFrame,model:Literal['SARIMAX','SARIMA','GARCH','SARIMAX_GARCH'] = None):
-        self.original_data = data
-        self.data_handled = data
-        if model == 'SARIMAX':
-            self.data_handled = self.Data_aggregation('sum')
-        elif model == 'SARIMA':
-            self.data_handled = self.Data_aggregation('sum')
-            self.data_handled = self.Data_smoothing(smoothing=True, smoothing_window=10)
-        elif model == 'GARCH':
-            self.data_handled = self.Data_aggregation('sum')
-            self.data_handled = self.Data_smoothing(smoothing=True, smoothing_window=10)
-        elif model == 'SARIMAX_GARCH':
-            self.data_handled = self.Data_aggregation('sum')
-            self.data_handled = self.Data_smoothing(smoothing=True, smoothing_window=10)
-
-
-class Sarima_Garch_Model():
-    """
-    This Class is for a model that is combination between SARIMA model for values and mean predictions
-    and GARCH model for volatility and variance estimation.
-    It allows for rolling predictions and evaluation of the model's performance.\n
-    stationarity_test: Performs stationarity test on the data.\n
-    fit_predict_rolling: Fits the SARIMA and GARCH models using rolling predictions.\n
-    model_evaluation: Evaluates the performance of the fitted models.\n
-    plot_results: Plots the actual vs predicted values.\n
-    """
-    def __init__(self, data: pd.DataFrame):
-        """
-        Initializes the Sarima_Garch_Model with data.\n
-        data: Dataframe that will be used for modeling. (only one feature is allowed and indexed by time)\n
-        This Class is for a model that is combination between SARIMA model for values and mean predictions
-        and GARCH model for volatility and variance estimation.
-        It allows for rolling predictions and evaluation of the model's performance.\n
-        stationarity_test: Performs stationarity test on the data.\n
-        fit_predict_rolling: Fits the SARIMA and GARCH models using rolling predictions.\n
-        model_evaluation: Evaluates the performance of the fitted models.\n
-        plot_results: Plots the actual vs predicted values.\n
-        """
-        self.data = data
-        # Smoothing
-        self.smoothing = None
-        # Rolling predictions
-        self.sarima_rolling_predictions = None
-        self.garch_rolling_predictions = None
-        self.predicted_values = None
-        self.forecasted_mean = 0
-        # Models
-        self.sarima_model = None
-        self.garch_model = None
-        # Window for rolling
-        self.train_window = None
-        # Fitted models
-        self.sarima_fit = None
-        self.garch_fit = None
-        # Predictions without rolling
-        self.sarima_forecast = None
-        self.garch_forecast = None
-        self.combined_forecast = None
-
-
-    '''def data_preprocessing(self,smoothing: bool = None, smoothing_window: int = None, Aggregation: Literal['mean', 'sum'] = 'sum'):
-        """
-        Preprocess the data by applying smoothing if specified.
-        smoothing: Boolean indicating whether to apply smoothing to the data.\n
-        smoothing_window: Integer representing the window size for smoothing.\n
-        Aggregation: String indicating the type of aggregation to apply (mean or sum).\n
-        """
-        self.data.index = pd.to_datetime(self.data.index)
-        self.smoothing = smoothing
-        
-        if self.smoothing:
-            self.data = self.data.rolling(smoothing_window).mean()
-
-        if Aggregation == 'mean':
-            self.data = self.data.resample('h').mean()
-        else:
-            self.data = self.data.resample('h').sum()'''
-
-    
-    
-
-    def fit(self, arima_order, seasonal_order, garch_p, garch_q):
-        self.sarima_model = SARIMAX(self.data, order=arima_order, seasonal_order=seasonal_order)
-        self.sarima_fit = self.sarima_model.fit(disp=False)
-        self.garch_model = arch_model(self.data, vol='Garch', p=garch_p, q=garch_q)
-        self.garch_fit = self.garch_model.fit(disp='off')
-
-    def predict(self, sarima_horizon, garch_horizon):
-        self.sarima_forecast = self.sarima_fit.forecast(steps=sarima_horizon)
-        self.garch_forecast = self.garch_fit.forecast(steps=garch_horizon)
-        self.forecasted_mean = self.sarima_forecast.mean()
-        # Combine SARIMA and GARCH forecasts
-        combined_forecast = []
-        value = None
-        for i in range(len(self.sarima_forecast)):
-            if self.sarima_forecast.iloc[i] >= self.forecasted_mean:
-                value = self.forecasted_mean + self.garch_forecast.iloc[i]
-            else:
-                value =  self.forecasted_mean - self.garch_forecast.iloc[i]
-            combined_forecast.append(value)
-
-        self.combined_forecast = pd.Series(combined_forecast, index=self.sarima_forecast.index, name='predicted_Values')
-        return self.sarima_forecast, self.garch_forecast, self.combined_forecast
-
-    def fit_predict_rolling(self, arima_order: tuple = (2,0,2), seasonal_order: tuple = (1,1,1,24), garch_p: int = 1,
-                  garch_q: int = 1, training_window: int = 24, sarima_pred_steps: int = 1, rolling_step_sarima: int = 1,
-                  garch_pred_steps: int = 1, rolling_step_garch: int = 1):
-        """
-        Fits the SARIMA and GARCH models using rolling predictions.\n
-        arima_order: Order of the SARIMA model.\n
-        seasonal_order: Seasonal order of the SARIMA model.\n
-        garch_p: Order of the GARCH model (lagged variance).\n
-        garch_q: Order of the ARCH model (lagged error).\n
-        training_window: Size of the training window.\n
-        sarima_pred_steps: Number of steps to predict with SARIMA.\n
-        garch_pred_steps: Number of steps to predict with GARCH.\n
-        rolling_step_sarima: Step size for rolling predictions with SARIMA.\n
-        rolling_step_garch: Step size for rolling predictions with GARCH.\n
-        """
-        #######################################################################
-        ######                      SARIMA                               ######
-        #######################################################################
-        # Fit the SARIMA model and GARCH model using rolling predictions
-        self.sarima_rolling_predictions = []
-        self.train_window = training_window # 5 days
-        forecast_horizon_SARIMA = sarima_pred_steps # 1 hour
-        step_SARIMA = rolling_step_sarima # roll by 1 hour
-
-
-        # Ensure enough data for at least one window and forecast
-        if len(self.data) < self.train_window + forecast_horizon_SARIMA:
-            print("Not enough data for the specified window and horizon.")
-        else:
-            # Determine the number of rolling windows
-            num_windows = (len(self.data) - self.train_window - forecast_horizon_SARIMA) // step_SARIMA + 1
-
-            for i in range(num_windows):
-                # Define the training and testing slices for the current window
-                start_idx = i * step_SARIMA
-                end_idx_train = start_idx + self.train_window
-                end_idx_test = end_idx_train + forecast_horizon_SARIMA
-
-                current_train = self.data.iloc[start_idx:end_idx_train]
-                current_test_index = self.data.iloc[end_idx_train:end_idx_test].index
-
-
-                # Fit the SARIMA model
-                self.sarima_model = SARIMAX(current_train, order=arima_order, seasonal_order=seasonal_order) # Simplified SARIMA order
-                sarima_model_fit = self.sarima_model.fit(disp=False, enforce_stationarity=False, enforce_invertibility=False) # Added convergence arguments
-                forecasted_sarima_values = sarima_model_fit.get_forecast(steps=forecast_horizon_SARIMA).predicted_mean
-                # forecasted_mean = forecasted.mean() # This line is not needed here
-
-                # Store the forecasts with the correct index
-                self.sarima_rolling_predictions.append(pd.Series(forecasted_sarima_values, index=current_test_index))
-
-        # Concatenate the list of Series into a single Series
-        self.sarima_rolling_predictions = pd.concat(self.sarima_rolling_predictions)
-        self.forecasted_mean = self.sarima_rolling_predictions.mean()
-        print("SARIMA Rolling Prediction is completed successfully")
-
-        #######################################################################
-        ########################       GARCH         ########################## 
-        #######################################################################
-        self.garch_rolling_predictions = []
-        forecast_horizon_GARCH = garch_pred_steps
-        step_GARCH = rolling_step_garch
-        # Ensure enough data for at least one window and forecast
-        if len(self.data) < self.train_window + forecast_horizon_GARCH:
-            print("Not enough data for the specified window and horizon.")
-        else:
-            # Determine the number of rolling windows
-            '''if self.smoothing:
-                num_windows = (len(self.data) - self.train_window - forecast_horizon_GARCH) + 1
-            else:'''
-            num_windows = (len(self.data) - self.train_window - forecast_horizon_GARCH) // step_GARCH + 1
-
-            for i in range(num_windows):
-                # Define the training and testing slices for the current window
-                start_idx = i * step_GARCH
-                end_idx_train = start_idx + self.train_window
-                end_idx_test = end_idx_train + forecast_horizon_GARCH  
-                # If smoothing is applied, drop NaN values in the training set 
-                if self.smoothing:
-                    current_train = self.data.iloc[start_idx:end_idx_train].dropna()
-                    current_test_index = self.data.iloc[end_idx_train:end_idx_test].index
-                else:
-                    current_train = self.data.iloc[start_idx:end_idx_train]
-                    current_test_index = self.data.iloc[end_idx_train:end_idx_test].index
-
-                # Fit the GARCH model
-                self.garch_model = arch_model(current_train,vol="GARCH", p=garch_p, q=garch_q,rescale=False)
-                model_fit = self.garch_model.fit(disp="off")
-
-                # Forecast volatility for the horizon
-                pred = model_fit.forecast(horizon=forecast_horizon_GARCH)
-                volatility_forecast = np.sqrt(pred.variance.values[-1, :])
-
-                # Store the forecasts with the correct index
-                self.garch_rolling_predictions.append(pd.Series(volatility_forecast, index=current_test_index))
-
-        # Concatenate the list of Series into a single Series
-        self.garch_rolling_predictions = pd.concat(self.garch_rolling_predictions)
-        print("GARCH Rolling Prediction is completed successfully")
-        #######################################################################
-        ########################       Combined      ##########################
-        #######################################################################
-
-        self.predicted_values = []
-        value = None
-        for i in range(len(self.sarima_rolling_predictions)):
-            if self.sarima_rolling_predictions.iloc[i] >= self.forecasted_mean:
-                value = self.forecasted_mean + self.garch_rolling_predictions.iloc[i]
-            else:
-                value =  self.forecasted_mean - self.garch_rolling_predictions.iloc[i]
-            self.predicted_values.append(value)
-
-        self.predicted_values = pd.Series(self.predicted_values, index=self.sarima_rolling_predictions.index,name = 'predicted_Values')
-        print("Combined Rolling Prediction is completed successfully")
-
-
-    def evaluation(self,rolling: bool = True ,model_to_evaluate: Literal['sarima', 'garch', 'combined'] = 'combined',
-                    eval_metric: Literal['mse', 'mae', 'mape','rmse'] = 'mape',
-                    start_index: int = None,end_index: int = None):
-        """
-        Evaluate the specified model using the chosen metric.\n
-        model_to_evaluate: The model to evaluate ['sarima', 'garch', 'combined'].\n
-        eval_metric: The evaluation metric to use ['mse', 'mae', 'mape', 'rmse'].\n
-        start_index: start of single forecast
-        end_index: end of single forecast
-        """
-        # Evaluate the specified model
-        if rolling:
-            if model_to_evaluate == 'sarima':
-                if eval_metric == 'mse':
-                    return MSE(self.data[self.train_window:],self.sarima_rolling_predictions)
-                elif eval_metric == 'mae':
-                    return MAE(self.data[self.train_window:],self.sarima_rolling_predictions)
-                elif eval_metric == 'rmse':
-                    return RMSE(self.data[self.train_window:],self.sarima_rolling_predictions)
-                else:
-                    return MAPE(self.data[self.train_window:],self.sarima_rolling_predictions)
-            elif model_to_evaluate == 'garch':
-                if eval_metric == 'mse':
-                    return MSE(self.data[self.train_window:],self.garch_rolling_predictions)
-                elif eval_metric == 'mae':
-                    return MAE(self.data[self.train_window:],self.garch_rolling_predictions)
-                elif eval_metric == 'rmse':
-                    return RMSE(self.data[self.train_window:],self.garch_rolling_predictions)
-                else:
-                    return MAPE(self.data[self.train_window:],self.garch_rolling_predictions)
-            elif model_to_evaluate == 'combined':
-                if eval_metric == 'mse':
-                    return MSE(self.data[self.train_window:],self.predicted_values)
-                elif eval_metric == 'mae':
-                    return MAE(self.data[self.train_window:],self.predicted_values)
-                elif eval_metric == 'rmse':
-                    return RMSE(self.data[self.train_window:],self.predicted_values)
-                else:
-                    return MAPE(self.data[self.train_window:],self.predicted_values)
-        else:
-            if model_to_evaluate == 'sarima':
-                if eval_metric == 'mse':
-                    return MSE(self.data[start_index:end_index],self.sarima_forecast)
-                elif eval_metric == 'mae':
-                    return MAE(self.data[start_index:end_index],self.sarima_forecast)
-                elif eval_metric == 'rmse':
-                    return RMSE(self.data[start_index:end_index],self.sarima_forecast)
-                else:
-                    return MAPE(self.data[start_index:end_index],self.sarima_forecast)
-            elif model_to_evaluate == 'garch':
-                if eval_metric == 'mse':
-                    return MSE(self.data[start_index:end_index],self.garch_forecast)
-                elif eval_metric == 'mae':
-                    return MAE(self.data[start_index:end_index],self.garch_forecast)
-                elif eval_metric == 'rmse':
-                    return RMSE(self.data[start_index:end_index],self.garch_forecast)
-                else:
-                    return MAPE(self.data[start_index:end_index],self.garch_forecast)
-            elif model_to_evaluate == 'combined':
-                if eval_metric == 'mse':
-                    return MSE(self.data[start_index:end_index],self.combined_forecast)
-                elif eval_metric == 'mae':
-                    return MAE(self.data[start_index:end_index],self.combined_forecast)
-                elif eval_metric == 'rmse':
-                    return RMSE(self.data[start_index:end_index],self.combined_forecast)
-                else:
-                    return MAPE(self.data[start_index:end_index],self.combined_forecast)
-
-
-    def plot_predictions(self, model_to_plot: Literal['sarima', 'garch', 'combined'] = 'combined'):
-        """
-        Plot the predictions of the specified model.\n
-        model_to_plot: The model to plot ['sarima', 'garch', 'combined'].\n
-        """
-        fig = go.Figure()
-        if model_to_plot == 'sarima':
-            fig.add_trace(go.Scatter(x=self.sarima_rolling_predictions.index, y=self.sarima_rolling_predictions, mode='lines', name='SARIMA Predictions'))
-            fig.add_trace(go.Scatter(x=self.sarima_rolling_predictions.index, y=[self.forecasted_mean]*len(self.sarima_rolling_predictions), mode='lines', name='SARIMA Forecasted Mean'))
-            fig.update_layout(
-                title="SARIMA Rolling Predictions vs Actual Data",
-                xaxis_title="datetime",
-                yaxis_title="Value",
-                hovermode="x unified"
-            )
-
-        elif model_to_plot == 'garch':
-            fig.add_trace(go.Scatter(x=self.garch_rolling_predictions.index, y=self.garch_rolling_predictions, mode='lines', name='GARCH Predictions'))
-            fig.add_trace(go.Scatter(x=self.garch_rolling_predictions.index, y=[self.forecasted_mean]*len(self.garch_rolling_predictions), mode='lines', name='GARCH Forecasted Mean'))
-            fig.update_layout(
-                title="GARCH Rolling Predictions vs Actual Data",
-                xaxis_title="datetime",
-                yaxis_title="Value",
-                hovermode="x unified"
-            )
-
-        elif model_to_plot == 'combined':
-            fig.add_trace(go.Scatter(x=self.predicted_values.index, y=self.predicted_values, mode='lines', name='Combined Predictions'))
-            fig.add_trace(go.Scatter(x=self.predicted_values.index, y=[self.forecasted_mean]*len(self.predicted_values), mode='lines', name='Combined Forecasted Mean'))
-            fig.update_layout(
-                title="SARIMA_GARCH Rolling Predictions vs Actual Data",
-                xaxis_title="datetime",
-                yaxis_title="Value",
-                hovermode="x unified"
-            )
-
-        fig.add_trace(go.Scatter(x=self.data.index, y=self.data, mode='lines', name='Actual'))
-        fig.add_trace(go.Scatter(x=self.data.index, y=self.data.mean().repeat(len(self.data)), mode='lines', name='Actual data mean'))
-
-        fig.show()
+from tqdm import tqdm
+import time
+from sarima_garch import Sarima_Garch_Model
+from Data_Handler import Data_Handler
 
 
 class GARCH_Model():
@@ -491,9 +83,9 @@ class GARCH_Model():
         fig.show()
 
 
-class Model_Selection(Data_Handler,Sarima_Garch_Model,GARCH_Model):
+class Model_Selection(Data_Handler, Sarima_Garch_Model, GARCH_Model):
     def __init__(self, data: pd.DataFrame,
-                  model: Literal['SARIMA','SARIMAX','SARIMA-GARCH','LSTM','TACTIS-2']):
+                  model: Literal['SARIMA', 'SARIMAX', 'SARIMA-GARCH', 'LSTM', 'TACTIS-2'],Pred_steps: int = 24):
         self.original_data = data
         self.data = data
         self.model = model
@@ -502,28 +94,69 @@ class Model_Selection(Data_Handler,Sarima_Garch_Model,GARCH_Model):
         self.predicted_Values = None
         self.forecasted_mean = None
         Handler = Data_Handler(self.data)
-        if model == 'SARIMA':
-            self.data = Handler.Data_aggregation('sum')
-            self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
-            #self.model_instance = SARIMA_Model(data)
-        elif model == 'SARIMAX':
-            self.data = Handler.Data_aggregation('sum')
-            self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
-            #self.model_instance = SARIMAX_Model(data, exogenous=True)
-        
-        elif model == 'SARIMA-GARCH':
-            self.data = Handler.Data_aggregation('sum')
-            self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
-            self.model_instance = Sarima_Garch_Model(data)
-            self.model_fit = self.model.fit(arima_order=(2,0,2), seasonal_order=(1,1,1,24), garch_p=2, garch_q=2)
-            self.predicted_Values = self.model_instance.predict(sarima_horizon=24, garch_horizon=24)
-            
-        elif model == 'LSTM':
-            self.data = Handler.Data_aggregation('sum')
-            self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
-            self.data = Handler.scaling(scaler='standard')
 
-            #self.model_instance = LSTM_Model(data)
+        if model == 'SARIMA':
+            steps = ["Aggregating data", "Smoothing data"]
+            for step in tqdm(steps, desc="SARIMA Model Preparation", unit="step"):
+                if step == "Aggregating data":
+                    print("Running: Aggregating data...")
+                    self.data = Handler.Data_aggregation('sum')
+                elif step == "Smoothing data":
+                    print("Running: Smoothing data...")
+                    self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
+                time.sleep(0.2)  # Simulate processing time
+            # self.model_instance = SARIMA_Model(data)
+
+        elif model == 'SARIMAX':
+            steps = ["Aggregating data", "Smoothing data"]
+            for step in tqdm(steps, desc="SARIMAX Model Preparation", unit="step"):
+                if step == "Aggregating data":
+                    print("Running: Aggregating data...")
+                    self.data = Handler.Data_aggregation('sum')
+                elif step == "Smoothing data":
+                    print("Running: Smoothing data...")
+                    self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
+                time.sleep(0.2)
+            # self.model_instance = SARIMAX_Model(data, exogenous=True)
+
+        elif model == 'SARIMA-GARCH':
+            steps = ["Aggregating data", "Smoothing data", "Fitting SARIMA-GARCH model", "Predicting values"]
+            for step in tqdm(steps, desc="SARIMA-GARCH Model Preparation", unit="step"):
+                if step == "Aggregating data":
+                    print("Running: Aggregating data...")
+                    self.data = Handler.Data_aggregation('sum')
+                elif step == "Smoothing data":
+                    print("Running: Smoothing data...")
+                    self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
+                elif step == "Fitting SARIMA-GARCH model":
+                    print("Running: Fitting SARIMA-GARCH model...")
+                    self.model_instance = Sarima_Garch_Model(self.data)
+                    self.model_fit = self.model_instance.fit(arima_order=(2, 0, 2), seasonal_order=(1, 1, 1, 24), garch_p=2, garch_q=2)
+                elif step == "Predicting values":
+                    print("Running: Predicting values...")
+                    self.predicted_Values = self.model_instance.predict(sarima_horizon=Pred_steps, garch_horizon=Pred_steps)
+                time.sleep(0.2)
+
+        elif model == 'LSTM':
+            steps = ["Aggregating data", "Smoothing data", "Scaling data"]
+            for step in tqdm(steps, desc="LSTM Model Preparation", unit="step"):
+                if step == "Aggregating data":
+                    print("Running: Aggregating data...")
+                    self.data = Handler.Data_aggregation('sum')
+                elif step == "Smoothing data":
+                    print("Running: Smoothing data...")
+                    self.data = Handler.Data_smoothing(smoothing=True, smoothing_window=10)
+                elif step == "Scaling data":
+                    print("Running: Scaling data...")
+                    self.data = Handler.scaling(scaler='standard')
+                time.sleep(0.2)
+            # self.model_instance = LSTM_Model(data)
+
         elif model == 'TACTIS-2':
-            self.data = Handler.Data_aggregation('sum')
-            #self.model_instance = TACTIS2_Model(data)
+            steps = ["Aggregating data"]
+            for step in tqdm(steps, desc="TACTIS-2 Model Preparation", unit="step"):
+                if step == "Aggregating data":
+                    print("Running: Aggregating data...")
+                    self.data = Handler.Data_aggregation('sum')
+                time.sleep(0.2)
+            # self.model_instance = TACTIS2_Model(data)
